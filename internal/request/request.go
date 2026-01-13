@@ -4,17 +4,21 @@ import (
 	"fmt"
 	"io"
 	"strings"
+
+	"github.com/Skorgum/httpfromtcp/internal/headers"
 )
 
 type parseState int
 
 const (
 	stateInitialized parseState = iota
+	stateParsingHeaders
 	stateDone
 )
 
 type Request struct {
 	RequestLine RequestLine
+	Headers     headers.Headers
 	state       parseState
 }
 
@@ -31,7 +35,8 @@ func RequestFromReader(reader io.Reader) (*Request, error) {
 	readToIndex := 0
 
 	req := &Request{
-		state: stateInitialized,
+		state:   stateInitialized,
+		Headers: headers.NewHeaders(),
 	}
 
 	for req.state != stateDone {
@@ -111,19 +116,44 @@ func parseRequestLine(data []byte) (*RequestLine, int, error) {
 }
 
 func (r *Request) parse(data []byte) (int, error) {
+	total := 0
+
+	for r.state != stateDone {
+		n, err := r.parseSingle(data[total:])
+		if err != nil {
+			return 0, err
+		}
+		total += n
+		if n == 0 {
+			break
+		}
+	}
+
+	return total, nil
+}
+
+func (r *Request) parseSingle(data []byte) (int, error) {
 	switch r.state {
 	case stateInitialized:
-		rl, n, err := parseRequestLine(data)
+		r1, n, err := parseRequestLine(data)
 		if err != nil {
 			return 0, err
 		}
 		if n == 0 {
-			// need more data
 			return 0, nil
 		}
+		r.RequestLine = *r1
+		r.state = stateParsingHeaders
+		return n, nil
 
-		r.RequestLine = *rl
-		r.state = stateDone
+	case stateParsingHeaders:
+		n, done, err := r.Headers.Parse(data)
+		if err != nil {
+			return 0, err
+		}
+		if done {
+			r.state = stateDone
+		}
 		return n, nil
 
 	case stateDone:
