@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 	"net"
+	"sort"
 
 	"github.com/Skorgum/httpfromtcp/internal/request"
 )
@@ -35,8 +36,15 @@ func main() {
 		fmt.Printf("- Target: %s\n", req.RequestLine.RequestTarget)
 		fmt.Printf("- Version: %s\n", req.RequestLine.HttpVersion)
 		fmt.Println("Headers:")
-		for key, value := range req.Headers {
-			fmt.Printf("- %s: %s\n", key, value)
+		keys := make([]string, 0, len(req.Headers))
+		for k := range req.Headers {
+			keys = append(keys, k)
 		}
+		sort.Strings(keys)
+		for _, k := range keys {
+			fmt.Printf("- %s: %s\n", k, req.Headers[k])
+		}
+		fmt.Println("Body:")
+		fmt.Println(string(req.Body))
 	}
 }

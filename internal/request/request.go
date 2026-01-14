@@ -3,6 +3,7 @@ package request
 import (
 	"fmt"
 	"io"
+	"strconv"
 	"strings"
 
 	"github.com/Skorgum/httpfromtcp/internal/headers"
@@ -13,12 +14,14 @@ type parseState int
 const (
 	stateInitialized parseState = iota
 	stateParsingHeaders
+	stateParsingBody
 	stateDone
 )
 
 type Request struct {
 	RequestLine RequestLine
 	Headers     headers.Headers
+	Body        []byte
 	state       parseState
 }
 
@@ -152,9 +155,36 @@ func (r *Request) parseSingle(data []byte) (int, error) {
 			return 0, err
 		}
 		if done {
-			r.state = stateDone
+			r.state = stateParsingBody
 		}
 		return n, nil
+
+	case stateParsingBody:
+		clStr := r.Headers.Get("content-length")
+		if clStr == "" {
+			r.state = stateDone
+			return 0, nil
+		}
+
+		contentLength, err := strconv.Atoi(clStr)
+		if err != nil || contentLength < 0 {
+			return 0, fmt.Errorf("invalid Content-Length")
+		}
+
+		incoming := data
+		newLen := len(r.Body) + len(incoming)
+
+		if newLen > contentLength {
+			return 0, fmt.Errorf("body larger than Content-Length")
+		}
+
+		r.Body = append(r.Body, incoming...)
+
+		if newLen == contentLength {
+			r.state = stateDone
+		}
+
+		return len(incoming), nil
 
 	case stateDone:
 		return 0, fmt.Errorf("cannot parse in done state")

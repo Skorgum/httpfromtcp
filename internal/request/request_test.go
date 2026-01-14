@@ -136,3 +136,79 @@ func TestRequest_MissingEndOfHeaders(t *testing.T) {
 	require.Error(t, err)
 	assert.Nil(t, r)
 }
+
+func TestRequestBody_StandardBody(t *testing.T) {
+	reader := &chunkReader{
+		data: "POST /submit HTTP/1.1\r\n" +
+			"Host: localhost:42069\r\n" +
+			"Content-Length: 13\r\n" +
+			"\r\n" +
+			"hello world!\n",
+		numBytesPerRead: 3,
+	}
+
+	r, err := RequestFromReader(reader)
+	require.NoError(t, err)
+	require.NotNil(t, r)
+	assert.Equal(t, "hello world!\n", string(r.Body))
+}
+
+func TestRequestBody_EmptyWithZeroLength(t *testing.T) {
+	reader := &chunkReader{
+		data: "POST /submit HTTP/1.1\r\n" +
+			"Host: localhost:42069\r\n" +
+			"Content-Length: 0\r\n" +
+			"\r\n",
+		numBytesPerRead: 4,
+	}
+
+	r, err := RequestFromReader(reader)
+	require.NoError(t, err)
+	require.NotNil(t, r)
+	assert.Equal(t, "", string(r.Body))
+}
+
+func TestRequestBody_NoContentLengthNoBody(t *testing.T) {
+	reader := &chunkReader{
+		data: "GET /submit HTTP/1.1\r\n" +
+			"Host: localhost:42069\r\n" +
+			"\r\n",
+		numBytesPerRead: 4,
+	}
+
+	r, err := RequestFromReader(reader)
+	require.NoError(t, err)
+	require.NotNil(t, r)
+	assert.Equal(t, "", string(r.Body))
+}
+
+func TestRequestBody_ShorterThanContentLength(t *testing.T) {
+	reader := &chunkReader{
+		data: "POST /submit HTTP/1.1\r\n" +
+			"Host: localhost:42069\r\n" +
+			"Content-Length: 20\r\n" +
+			"\r\n" +
+			"partial content",
+		numBytesPerRead: 3,
+	}
+
+	r, err := RequestFromReader(reader)
+	require.Error(t, err)
+	assert.Nil(t, r)
+}
+
+func TestRequestBody_NoContentLengthButBodyExists(t *testing.T) {
+	reader := &chunkReader{
+		data: "POST /submit HTTP/1.1\r\n" +
+			"Host: localhost:42069\r\n" +
+			"\r\n" +
+			"ignored body",
+		numBytesPerRead: 3,
+	}
+
+	r, err := RequestFromReader(reader)
+	require.NoError(t, err)
+	require.NotNil(t, r)
+	// we assume no body if Content-Length is missing
+	assert.Equal(t, "", string(r.Body))
+}
