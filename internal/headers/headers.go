@@ -8,6 +8,10 @@ import (
 
 type Headers map[string]string
 
+func (h Headers) Override(key, value string) {
+	h[key] = value
+}
+
 func NewHeaders() Headers {
 	return make(map[string]string)
 }

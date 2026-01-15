@@ -1,9 +1,8 @@
 package server
 
 import (
-	"bytes"
 	"fmt"
-	"io"
+	"log"
 	"net"
 	"sync/atomic"
 
@@ -11,37 +10,23 @@ import (
 	"github.com/Skorgum/httpfromtcp/internal/response"
 )
 
-type Handler func(w io.Writer, req *request.Request) *HandlerError
+type Handler func(w *response.Writer, req *request.Request)
 
 type Server struct {
-	ln      net.Listener
-	handler Handler
-	closed  atomic.Bool
-}
-
-type HandlerError struct {
-	StatusCode response.StatusCode
-	Message    string
-}
-
-func (he HandlerError) Write(w io.Writer) {
-	body := []byte(he.Message)
-	response.WriteStatusLine(w, he.StatusCode)
-	headers := response.GetDefaultHeaders(len(body))
-	response.WriteHeaders(w, headers)
-	w.Write(body)
+	listener net.Listener
+	handler  Handler
+	closed   atomic.Bool
 }
 
 func Serve(port int, handler Handler) (*Server, error) {
-	addr := fmt.Sprintf(":%d", port)
-	ln, err := net.Listen("tcp", addr)
+	listener, err := net.Listen("tcp", fmt.Sprintf(":%d", port))
 	if err != nil {
 		return nil, err
 	}
 
 	srv := &Server{
-		ln:      ln,
-		handler: handler,
+		listener: listener,
+		handler:  handler,
 	}
 
 	go srv.listen()
@@ -51,16 +36,20 @@ func Serve(port int, handler Handler) (*Server, error) {
 
 func (s *Server) Close() error {
 	s.closed.Store(true)
-	return s.ln.Close()
+	if s.listener != nil {
+		return s.listener.Close()
+	}
+	return nil
 }
 
 func (s *Server) listen() {
 	for {
-		conn, err := s.ln.Accept()
+		conn, err := s.listener.Accept()
 		if err != nil {
 			if s.closed.Load() {
 				return
 			}
+			log.Printf("Error accepting connection: %v", err)
 			continue
 		}
 		go s.handle(conn)
@@ -70,27 +59,16 @@ func (s *Server) listen() {
 func (s *Server) handle(conn net.Conn) {
 	defer conn.Close()
 
+	w := response.NewWriter(conn)
+
 	req, err := request.RequestFromReader(conn)
 	if err != nil {
-		hErr := HandlerError{
-			StatusCode: response.StatusBadRequest,
-			Message:    err.Error(),
-		}
-		hErr.Write(conn)
+		w.WriteStatusLine(response.StatusBadRequest)
+		body := []byte(fmt.Sprintf("Error parsing requst: %v", err))
+		w.WriteHeaders(response.GetDefaultHeaders(len(body)))
+		w.WriteBody(body)
 		return
 	}
 
-	buf := bytes.NewBuffer(nil)
-
-	hErr := s.handler(buf, req)
-	if hErr != nil {
-		hErr.Write(conn)
-		return
-	}
-
-	body := buf.Bytes()
-	response.WriteStatusLine(conn, response.StatusOk)
-	headers := response.GetDefaultHeaders(len(body))
-	response.WriteHeaders(conn, headers)
-	conn.Write(body)
+	s.handler(w, req)
 }
