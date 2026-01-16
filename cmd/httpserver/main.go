@@ -1,11 +1,18 @@
 package main
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
+	"io"
 	"log"
+	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
+	"strings"
 	"syscall"
 
+	"github.com/Skorgum/httpfromtcp/internal/headers"
 	"github.com/Skorgum/httpfromtcp/internal/request"
 	"github.com/Skorgum/httpfromtcp/internal/response"
 	"github.com/Skorgum/httpfromtcp/internal/server"
@@ -28,7 +35,78 @@ func main() {
 }
 
 func handler(w *response.Writer, req *request.Request) {
-	switch req.RequestLine.RequestTarget {
+	target := req.RequestLine.RequestTarget
+
+	if strings.HasPrefix(target, "/httpbin/") {
+		path := strings.TrimPrefix(target, "/httpbin")
+		upstreamURL := "https://httpbin.org" + path
+
+		res, err := http.Get(upstreamURL)
+		if err != nil {
+			log.Println("Something went wrong:", err)
+			return
+		}
+		defer res.Body.Close()
+
+		w.WriteStatusLine(response.StatusOk)
+
+		h := response.GetDefaultHeaders(0)
+		delete(h, "Content-Length")
+		h.Override("Transfer-Encoding", "chunked")
+		h.Override("Content-Type", res.Header.Get("Content-Type"))
+		h.Override("Trailer", "X-Content-SHA256, X-Content-Length")
+
+		w.WriteHeaders(h)
+
+		buf := make([]byte, 1024)
+		var fullBody []byte
+
+		for {
+			n, err := res.Body.Read(buf)
+			if n > 0 {
+				chunk := buf[:n]
+				fullBody = append(fullBody, chunk...)
+
+				if _, werr := w.WriteChunkedBody(chunk); werr != nil {
+					log.Println("error writing chunk:", werr)
+					return
+				}
+			}
+			if err == io.EOF {
+				break
+			}
+			if err != nil {
+				log.Println("error reading upstream:", err)
+				return
+			}
+		}
+
+		//log.Println("fullBody length:", len(fullBody)) //Testing
+
+		if _, err := w.WriteChunkedBodyDone(); err != nil {
+			log.Println("error finishing chunked body:", err)
+			return
+		}
+
+		sum := sha256.Sum256(fullBody)
+		hashHex := hex.EncodeToString(sum[:])
+		lenghStr := strconv.Itoa(len(fullBody))
+
+		trailers := headers.Headers{
+			"X-Content-SHA256": hashHex,
+			"X-Content-Length": lenghStr,
+		}
+
+		//log.Println("hashHex:", hashHex, "lenStr:", lenghStr) //Testing
+		//log.Printf("trailers: %#v\n", trailers)               //Testing
+
+		if err := w.WriteTrailers(trailers); err != nil {
+			log.Panicln("error writing trailers:", err)
+			return
+		}
+	}
+
+	switch target {
 	case "/yourproblem":
 		body := []byte(`<html>
 	<head>
