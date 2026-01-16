@@ -101,9 +101,11 @@ func handler(w *response.Writer, req *request.Request) {
 		//log.Printf("trailers: %#v\n", trailers)               //Testing
 
 		if err := w.WriteTrailers(trailers); err != nil {
-			log.Panicln("error writing trailers:", err)
+			log.Println("error writing trailers:", err)
 			return
 		}
+
+		return
 	}
 
 	switch target {
@@ -147,6 +149,27 @@ func handler(w *response.Writer, req *request.Request) {
 
 		w.WriteHeaders(h)
 		w.WriteBody(body)
+
+	case "/video":
+		data, err := os.ReadFile("assets/vim.mp4")
+		if err != nil {
+			log.Println("Something went wrong", err)
+			w.WriteStatusLine(response.StatusInternalServerError)
+
+			body := []byte("internal server error")
+			h := response.GetDefaultHeaders(len(body))
+			h.Override("Content-Type", "text/plain")
+			w.WriteHeaders(h)
+			w.WriteBody(body)
+			return
+		}
+
+		w.WriteStatusLine(response.StatusOk)
+
+		h := response.GetDefaultHeaders(len(data))
+		h.Override("Content-Type", "video/mp4")
+		w.WriteHeaders(h)
+		w.WriteBody(data)
 
 	default:
 		body := []byte(`
